@@ -1,6 +1,6 @@
 import json
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 
 from shared.db.models import Camera as CameraModel
@@ -22,17 +22,20 @@ def list_districts(
     current_user: UserModel = Depends(get_current_user),
 ):
     """List all 33 Gujarat districts with camera count and PostGIS MultiPolygon boundary GeoJSON."""
+    join_conditions = [
+        CameraModel.district_id == DistrictModel.id,
+        CameraModel.is_active == True,
+    ]
+    if current_user.department_id:
+        join_conditions.append(CameraModel.department_id == current_user.department_id)
+
     rows = (
         db.query(
             DistrictModel,
             func.count(CameraModel.id).label("camera_count"),
             func.ST_AsGeoJSON(DistrictModel.boundary).label("boundary_geojson"),
         )
-        .outerjoin(
-            CameraModel,
-            (CameraModel.district_id == DistrictModel.id)
-            & (CameraModel.is_active == True),  # noqa: E712
-        )
+        .outerjoin(CameraModel, and_(*join_conditions))
         .group_by(DistrictModel.id)
         .order_by(DistrictModel.name)
         .all()

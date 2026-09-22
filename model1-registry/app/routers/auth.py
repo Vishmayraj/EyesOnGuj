@@ -16,6 +16,7 @@ from app.auth.security import create_access_token, verify_password
 from app.config import settings
 from shared.db.models import User as UserModel
 from shared.db.session import get_db
+from shared.audit import log_audit_event
 
 # secure=True refuses to send the cookie over plain HTTP at all - correct
 # once infra/Caddyfile is terminating real TLS (AuditReport1.md finding
@@ -74,12 +75,28 @@ def login(
 
     if not user or not user.is_active or not verify_password(credentials.password, user.hashed_password):
         login_rate_limiter.record_failure(rl_key)
+        
+        log_audit_event(
+            db=db,
+            action="login_failed",
+            resource_type="auth",
+            details={"username": credentials.username, "ip": client_ip}
+        )
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password.",
         )
 
     login_rate_limiter.record_success(rl_key)
+
+    log_audit_event(
+        db=db,
+        action="login_success",
+        resource_type="auth",
+        user=user,
+        details={"ip": client_ip}
+    )
 
     token_data = {
         "sub": str(user.id),
@@ -94,7 +111,7 @@ def login(
         key="access_token",
         value=access_token,
         httponly=True,
-        samesite="lax",
+        samesite="strict",
         secure=_COOKIE_SECURE,
         path="/",
     )
@@ -119,7 +136,7 @@ def logout(response: Response):
     response.delete_cookie(
         key="access_token",
         path="/",
-        samesite="lax",
+        samesite="strict",
         secure=_COOKIE_SECURE,
     )
     return {"status": "logged_out"}

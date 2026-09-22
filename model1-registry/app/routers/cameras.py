@@ -115,8 +115,11 @@ def list_cameras(
         joinedload(CameraModel.department),
         joinedload(CameraModel.district),
     )
-    if department_id:
+    if current_user.department_id:
+        q = q.filter(CameraModel.department_id == current_user.department_id)
+    elif department_id:
         q = q.filter(CameraModel.department_id == department_id)
+
     if district_id:
         q = q.filter(CameraModel.district_id == district_id)
     if connectivity_status:
@@ -296,6 +299,13 @@ def get_camera(
     )
     if not cam:
         raise HTTPException(status_code=404, detail="Camera not found")
+
+    if current_user.department_id and cam.department_id != current_user.department_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only access cameras within your assigned department.",
+        )
+
     return _camera_to_schema(cam)
 
 
@@ -383,6 +393,12 @@ def get_camera_history(
     cam = db.query(CameraModel).filter(CameraModel.id == camera_id).first()
     if not cam:
         raise HTTPException(status_code=404, detail="Camera not found")
+
+    if current_user.department_id and cam.department_id != current_user.department_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only access cameras within your assigned department.",
+        )
 
     rows = (
         db.query(StatusHistoryModel)

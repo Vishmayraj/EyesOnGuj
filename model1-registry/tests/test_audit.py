@@ -69,8 +69,8 @@ def home_camera(admin_home_client, home_dept_id):
 
 
 @pytest.fixture()
-def rto_camera(admin_home_client, rto_dept_id):
-    resp = admin_home_client.get(
+def rto_camera(admin_rto_client, rto_dept_id):
+    resp = admin_rto_client.get(
         "/api/v1/cameras", params={"department_id": rto_dept_id}
     )
     cams = resp.json()

@@ -39,9 +39,9 @@ def home_camera(admin_home_client, home_dept_id):
 
 
 @pytest.fixture()
-def rto_camera(admin_home_client, rto_dept_id):
+def rto_camera(admin_rto_client, rto_dept_id):
     """One seeded camera belonging to a DIFFERENT department than admin_home."""
-    resp = admin_home_client.get(
+    resp = admin_rto_client.get(
         "/api/v1/cameras", params={"department_id": rto_dept_id}
     )
     cams = resp.json()
@@ -152,14 +152,14 @@ def test_dept_admin_updates_own_department_camera(admin_home_client, home_camera
     assert body["connectivity_status"] == "maintenance"
 
 
-def test_dept_admin_cannot_update_other_department_camera(admin_home_client, rto_camera):
+def test_dept_admin_cannot_update_other_department_camera(admin_home_client, admin_rto_client, rto_camera):
     resp = admin_home_client.patch(
         f"/api/v1/cameras/{rto_camera['id']}",
         json={"name": "Should Not Be Allowed"},
     )
     assert resp.status_code == 403
     # And the camera must be unchanged.
-    check = admin_home_client.get(f"/api/v1/cameras/{rto_camera['id']}")
+    check = admin_rto_client.get(f"/api/v1/cameras/{rto_camera['id']}")
     assert check.json()["name"] == rto_camera["name"]
 
 
@@ -186,10 +186,10 @@ def test_update_writes_audit_trail(admin_home_client, home_camera):
 # ── The reported "genuine 403" on DELETE ───────────────────────────
 
 
-def test_dept_admin_cannot_delete_other_department_camera(admin_home_client, rto_camera):
+def test_dept_admin_cannot_delete_other_department_camera(admin_home_client, admin_rto_client, rto_camera):
     resp = admin_home_client.delete(f"/api/v1/cameras/{rto_camera['id']}")
     assert resp.status_code == 403
-    check = admin_home_client.get(f"/api/v1/cameras/{rto_camera['id']}")
+    check = admin_rto_client.get(f"/api/v1/cameras/{rto_camera['id']}")
     assert check.json()["is_active"] is True
 
 

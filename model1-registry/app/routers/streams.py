@@ -218,6 +218,7 @@ async def frame_generator(reader: CameraStreamReader):
 @router.get("/grid/{grid_id}/frame")
 async def get_camera_frame_by_grid_id(
     grid_id: str,
+    db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -229,6 +230,11 @@ async def get_camera_frame_by_grid_id(
         clean_id = f"cam{int(clean_id):02d}"
     elif not clean_id.startswith("cam"):
         clean_id = f"cam{clean_id}"
+
+    if current_user.department_id:
+        camera = db.query(CameraModel).filter(CameraModel.source_grid_id == clean_id).first()
+        if camera and camera.department_id != current_user.department_id:
+            raise HTTPException(status_code=403, detail="Not authorized to view this camera")
 
     rtsp_url = _build_authenticated_rtsp_url(clean_id)
 
@@ -250,6 +256,7 @@ async def get_camera_frame_by_grid_id(
 @router.get("/grid/{grid_id}/live")
 async def stream_camera_by_grid_id(
     grid_id: str,
+    db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -261,6 +268,11 @@ async def stream_camera_by_grid_id(
         clean_id = f"cam{int(clean_id):02d}"
     elif not clean_id.startswith("cam"):
         clean_id = f"cam{clean_id}"
+
+    if current_user.department_id:
+        camera = db.query(CameraModel).filter(CameraModel.source_grid_id == clean_id).first()
+        if camera and camera.department_id != current_user.department_id:
+            raise HTTPException(status_code=403, detail="Not authorized to view this camera stream")
 
     rtsp_url = _build_authenticated_rtsp_url(clean_id)
 
@@ -297,6 +309,10 @@ async def stream_camera_by_uuid(
     camera = db.query(CameraModel).filter(CameraModel.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
+
+    if current_user.department_id and camera.department_id != current_user.department_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this camera stream")
+
     rtsp_url = camera.rtsp_url
     grid_id = camera.source_grid_id or "cam01"
 
@@ -337,15 +353,14 @@ async def get_stream_catalogue(
     raw_base = str(request.base_url)
     base_url = raw_base if raw_base.endswith("/") else f"{raw_base}/"
 
-    cameras = (
-        db.query(CameraModel)
-        .filter(
-            CameraModel.is_active == True,  # noqa: E712
-            CameraModel.source_grid_id != None,  # noqa: E711
-        )
-        .order_by(CameraModel.source_grid_id)
-        .all()
+    q = db.query(CameraModel).filter(
+        CameraModel.is_active == True,  # noqa: E712
+        CameraModel.source_grid_id != None,  # noqa: E711
     )
+    if current_user.department_id:
+        q = q.filter(CameraModel.department_id == current_user.department_id)
+        
+    cameras = q.order_by(CameraModel.source_grid_id).all()
 
     if cameras:
         entries = []
@@ -381,6 +396,9 @@ async def get_stream_catalogue(
             )
         entries.sort(key=lambda x: int(x["id"].replace("cam", "")) if x["id"].replace("cam", "").isdigit() else 999)
         return JSONResponse(content={"cameras": entries, "source": "db", "total": len(entries)})
+
+    if current_user.department_id:
+        return JSONResponse(content={"cameras": [], "source": "db", "total": 0})
 
     # Fallback: generate catalogue from public grid spec
     logger.info("DB has no grid-synced cameras — returning grid fallback catalogue")
