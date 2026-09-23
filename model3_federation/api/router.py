@@ -29,10 +29,20 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
-from app.auth.dependencies import get_current_user, require_role
-from shared.db.models import User as UserModel
 from shared.db.session import get_db
+from shared.db.models import User as UserModel
+from app.auth.dependencies import get_current_user, require_role
+from model3_federation.schemas.models import (
+    VMSSystemCreate, VMSSystemUpdate, FederatedSystem,
+    FederatedEvent, WSMessage,
+)
+from model3_federation.adapters.registry import (
+    list_adapter_types, validate_config, build_adapter
+)
+from shared.security import encrypt_config, decrypt_config
+from shared.audit import log_audit_event
 from model3_federation.bus.event_bus import FederationEventBus
 from model3_federation.correlation.engine import CorrelationEngine
 from model3_federation.registration import register_adapter, register_adapter_in_request, load_dynamic_adapters
@@ -278,16 +288,20 @@ def get_federated_systems(
     current_user: UserModel = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """List all VMS systems (main grid + federated) with status, camera count, and last heartbeat."""
-    rows = db.execute(text(
-        """
+    q = """
         SELECT vs.id, vs.name, vs.vendor, vs.status,
                vs.camera_count, vs.last_heartbeat, vs.protocol, vs.ownership,
                d.name AS department_name, vs.department_hint, vs.adapter_type
         FROM   vms_systems vs
         LEFT JOIN departments d ON d.id = vs.department_id
-        ORDER  BY vs.name
-        """
-    )).fetchall()
+    """
+    params = {}
+    if current_user.department_id:
+        q += " WHERE vs.department_id = :dept_id"
+        params["dept_id"] = current_user.department_id
+        
+    q += " ORDER BY vs.name"
+    rows = db.execute(text(q), params).fetchall()
 
     result = []
     for r in rows:
@@ -452,12 +466,21 @@ async def create_system(
         "vendor": payload.vendor or adapter.vendor,
         "protocol": payload.adapter_type,
         "adapter_type": payload.adapter_type,
-        "config": json.dumps(payload.config or {}),
+        "config": encrypt_config(payload.config or {}),
         "ownership": payload.ownership,
         "dept": payload.department_id,
         "status": "connected" if connected else "disconnected",
     })
     db.commit()
+
+    log_audit_event(
+        db=db,
+        action="vms_created",
+        resource_type="vms",
+        resource_id=system_id,
+        user=current_user,
+        details={"name": payload.name, "protocol": payload.adapter_type}
+    )
 
     if not connected:
         if hasattr(adapter, "aclose"):
@@ -520,13 +543,19 @@ def update_system(
     current_user: UserModel = Depends(require_role("dept_admin", "operator")),
 ) -> dict[str, Any]:
     """Edit name/vendor/department/ownership on an existing vms_systems row."""
-    exists = db.execute(text("SELECT 1 FROM vms_systems WHERE id = :id"), {"id": system_id}).fetchone()
+    exists = db.execute(text("SELECT department_id FROM vms_systems WHERE id = :id"), {"id": system_id}).fetchone()
     if exists is None:
         raise HTTPException(status_code=404, detail="System not found")
+        
+    if current_user.department_id and exists[0] != current_user.department_id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this system")
 
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
         return {"id": system_id, "updated_fields": []}
+        
+    if "config" in updates:
+        updates["config"] = encrypt_config(updates["config"] or {})
 
     if updates.get("department_id") is not None:
         dept_row = db.execute(text(
@@ -544,6 +573,15 @@ def update_system(
     db.execute(text(f"UPDATE vms_systems SET {set_clause} WHERE id = :id"), params)
     db.commit()
 
+    log_audit_event(
+        db=db,
+        action="vms_updated",
+        resource_type="vms",
+        resource_id=system_id,
+        user=current_user,
+        details={"updated_fields": list(updates.keys())}
+    )
+
     return {"id": system_id, "updated_fields": list(updates.keys()), **updates}
 
 
@@ -560,9 +598,12 @@ def delete_system(
     without this check a delete here would quietly turn federated
     cameras into what looks like main-grid ones instead of failing loudly.
     """
-    exists = db.execute(text("SELECT 1 FROM vms_systems WHERE id = :id"), {"id": system_id}).fetchone()
+    exists = db.execute(text("SELECT department_id FROM vms_systems WHERE id = :id"), {"id": system_id}).fetchone()
     if exists is None:
         raise HTTPException(status_code=404, detail="System not found")
+        
+    if current_user.department_id and exists[0] != current_user.department_id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this system")
 
     camera_count = db.execute(text(
         "SELECT count(*) FROM cameras WHERE vms_system_id = :id"
@@ -578,6 +619,15 @@ def delete_system(
 
     db.execute(text("DELETE FROM vms_systems WHERE id = :id"), {"id": system_id})
     db.commit()
+
+    log_audit_event(
+        db=db,
+        action="vms_deleted",
+        resource_type="vms",
+        resource_id=system_id,
+        user=current_user,
+    )
+
     return {"status": "deleted", "id": system_id}
 
 
@@ -598,9 +648,17 @@ def get_federated_cameras(
         JOIN   vms_systems vs ON vs.id = c.vms_system_id
     """
     params: dict = {}
+    where_clauses = []
     if system_id:
-        q += " WHERE c.vms_system_id = :sys"
+        where_clauses.append("c.vms_system_id = :sys")
         params["sys"] = system_id
+    if current_user.department_id:
+        where_clauses.append("c.department_id = :dept_id")
+        params["dept_id"] = current_user.department_id
+        
+    if where_clauses:
+        q += " WHERE " + " AND ".join(where_clauses)
+        
     q += " ORDER BY vs.name, c.name"
 
     rows = db.execute(text(q), params).fetchall()
@@ -644,6 +702,9 @@ def get_federated_events(
     if system_id:
         q += " AND c.vms_system_id = :sys"
         params["sys"] = system_id
+    if current_user.department_id:
+        q += " AND c.department_id = :dept_id"
+        params["dept_id"] = current_user.department_id
     if plate:
         from model3_federation.correlation.engine import _normalize_plate
         params["plate"] = _normalize_plate(plate)

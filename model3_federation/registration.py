@@ -236,6 +236,9 @@ def _load_dynamic_adapter_rows(db_session_factory: Callable) -> list[dict]:
     own row or a record-only manual onboarding, neither of which this
     loads or touches."""
     from sqlalchemy import text
+    from sqlalchemy.orm import Session
+    from sqlalchemy.exc import IntegrityError
+    from shared.security import decrypt_config
 
     session = db_session_factory()
     try:
@@ -244,7 +247,13 @@ def _load_dynamic_adapter_rows(db_session_factory: Callable) -> list[dict]:
             "FROM vms_systems WHERE adapter_type IS NOT NULL"
         )).fetchall()
         return [
-            {"id": str(r[0]), "name": r[1], "adapter_type": r[2], "config": r[3] or {}, "ownership": r[4]}
+            {
+                "id": str(r[0]), 
+                "name": r[1], 
+                "adapter_type": r[2], 
+                "config": decrypt_config(r[3]) if isinstance(r[3], str) else (r[3] or {}), 
+                "ownership": r[4]
+            }
             for r in rows
         ]
     finally:
