@@ -24,6 +24,7 @@ from sqlalchemy import desc
 from app.auth.dependencies import require_role
 from shared.db.models import User as UserModel, PersonWatchlist as PersonWatchlistModel
 from shared.db.session import get_db
+from shared.audit import log_audit_event
 from shared.schemas.persons_watchlist import (
     PersonWatchlistResponse,
     PersonWatchlistUpdate,
@@ -211,12 +212,22 @@ async def create_watchlist_person(
         face_embedding=embedding,
         photo_path=rel_photo_path,
         status=clean_status,
+        department_id=current_user.department_id,
     )
     db.add(new_entry)
     db.commit()
     db.refresh(new_entry)
 
     logger.info(f"Person watchlist registered: '{clean_name}' (ID: {person_id}, Category: {clean_category})")
+
+    log_audit_event(
+        db=db,
+        action="watchlist_person_created",
+        resource_type="person_watchlist",
+        resource_id=str(person_id),
+        user=current_user,
+        details={"name": clean_name, "category": clean_category}
+    )
 
     # Construct quality metrics response
     quality_metrics = FaceQualityMetrics(
@@ -249,6 +260,9 @@ def list_watchlist_persons(
     """
     query = db.query(PersonWatchlistModel)
 
+    if current_user.department_id:
+        query = query.filter(PersonWatchlistModel.department_id == current_user.department_id)
+
     if status_filter:
         query = query.filter(PersonWatchlistModel.status == status_filter.strip().lower())
     if category:
@@ -269,7 +283,10 @@ def get_watchlist_person(
     """
     Get details of a specific person watchlist entry by UUID.
     """
-    item = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id).first()
+    query = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id)
+    if current_user.department_id:
+        query = query.filter(PersonWatchlistModel.department_id == current_user.department_id)
+    item = query.first()
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -288,7 +305,10 @@ def update_watchlist_person(
     """
     Update person details or status (e.g., mark as 'resolved' when apprehended or located).
     """
-    item = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id).first()
+    query = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id)
+    if current_user.department_id:
+        query = query.filter(PersonWatchlistModel.department_id == current_user.department_id)
+    item = query.first()
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -309,6 +329,16 @@ def update_watchlist_person(
 
     db.commit()
     db.refresh(item)
+
+    log_audit_event(
+        db=db,
+        action="watchlist_person_updated",
+        resource_type="person_watchlist",
+        resource_id=str(id),
+        user=current_user,
+        details={"updated_fields": list(update_data.keys())}
+    )
+
     return _format_person_response(item)
 
 
@@ -321,7 +351,10 @@ def delete_watchlist_person(
     """
     Delete a person watchlist entry permanently.
     """
-    item = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id).first()
+    query = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id)
+    if current_user.department_id:
+        query = query.filter(PersonWatchlistModel.department_id == current_user.department_id)
+    item = query.first()
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -340,6 +373,15 @@ def delete_watchlist_person(
 
     db.delete(item)
     db.commit()
+
+    log_audit_event(
+        db=db,
+        action="watchlist_person_deleted",
+        resource_type="person_watchlist",
+        resource_id=str(id),
+        user=current_user,
+    )
+
     return None
 
 

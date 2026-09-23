@@ -265,6 +265,9 @@ async def start_face_job(
     meta = _JOBS_META.get(job_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Job not found or expired")
+        
+    if current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only control jobs you uploaded.")
 
     worker = _JOBS.get(job_id)
     if worker and worker.is_running:
@@ -303,6 +306,10 @@ async def pause_face_job(
     worker = _JOBS.get(payload.job_id)
     if not worker:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    meta = _JOBS_META.get(payload.job_id)
+    if meta and current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only control jobs you uploaded.")
     worker.pause()
     return {"status": "paused", "job_id": payload.job_id}
 
@@ -318,6 +325,10 @@ async def resume_face_job(
     worker = _JOBS.get(payload.job_id)
     if not worker:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    meta = _JOBS_META.get(payload.job_id)
+    if meta and current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only control jobs you uploaded.")
     worker.resume()
     return {"status": "resumed", "job_id": payload.job_id}
 
@@ -333,6 +344,10 @@ async def stop_face_job(
     worker = _JOBS.get(payload.job_id)
     if not worker:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    meta = _JOBS_META.get(payload.job_id)
+    if meta and current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only control jobs you uploaded.")
     worker.stop()
     return {"status": "stopped", "job_id": payload.job_id}
 
@@ -361,6 +376,37 @@ def get_face_job_status(
         }
 
     return {"job_id": job_id, "state": meta.get("state", "ready")}
+
+
+@router.delete("/{job_id}")
+def delete_face_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("dept_admin", "operator")),
+):
+    """
+    Cancel a job, remove it from memory, and delete the uploaded media file from disk.
+    """
+    meta = _JOBS_META.get(job_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only delete jobs you uploaded.")
+
+    # Stop the worker if running
+    worker = _JOBS.get(job_id)
+    if worker:
+        worker.stop()
+        del _JOBS[job_id]
+
+    # Delete physical file
+    target_path = Path(meta.get("file_path") or meta.get("saved_path"))
+    target_path.unlink(missing_ok=True)
+
+    del _JOBS_META[job_id]
+
+    return {"status": "success", "job_id": job_id, "action": "deleted"}
 
 
 # ── 8. Query Person Alerts History ────────────────────────────────
@@ -422,6 +468,42 @@ async def ws_face_stream(websocket: WebSocket, job_id: str):
     Streams VIDEO_FRAME, PERSON_MATCH alerts, and JOB_PROGRESS events to clients.
     """
     _capture_running_loop()
+
+    # Authenticate token safely from cookie, header, or query param
+    token = websocket.cookies.get("access_token")
+    if token and token.startswith("Bearer "):
+        token = token[7:]
+    if not token:
+        auth_header = websocket.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        token = websocket.query_params.get("token")
+        if token and token.startswith("Bearer "):
+            token = token[7:]
+
+    user = None
+    if token:
+        try:
+            from app.auth.security import decode_access_token
+            payload = decode_access_token(token)
+            if payload and "sub" in payload:
+                user_id = uuid.UUID(payload["sub"])
+                db = _get_db_session()
+                if db:
+                    try:
+                        user = db.query(UserModel).filter(UserModel.id == user_id, UserModel.is_active.is_(True)).first()
+                    finally:
+                        db.close()
+        except Exception as e:
+            logger.debug(f"Face WS auth error: {e}")
+            user = None
+
+    if not user:
+        logger.warning(f"[{job_id}] Unauthenticated WebSocket connection to /ws/{job_id} — rejecting cleanly.")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized")
+        return
+
     await websocket.accept()
     _JOB_WS[job_id].add(websocket)
     logger.info(f"WebSocket client connected to job {job_id}")

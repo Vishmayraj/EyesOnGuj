@@ -239,6 +239,9 @@ async def start_recorded_job(
     meta = _JOBS_META.get(job_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Job not found. Upload video first.")
+        
+    if current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only control jobs you uploaded.")
 
     # Stop any existing worker for this job
     existing = _JOBS.get(job_id)
@@ -273,6 +276,10 @@ async def pause_recorded_job(
     if not worker or not worker.is_running:
         raise HTTPException(status_code=400, detail="Job is not actively running")
 
+    meta = _JOBS_META.get(req.job_id)
+    if meta and current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only control jobs you uploaded.")
+
     worker.pause()
     return {"status": "ok", "job_id": req.job_id, "state": worker.state}
 
@@ -288,6 +295,10 @@ async def resume_recorded_job(
     if not worker:
         raise HTTPException(status_code=404, detail="Job worker not found")
 
+    meta = _JOBS_META.get(req.job_id)
+    if meta and current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only control jobs you uploaded.")
+
     worker.resume()
     return {"status": "ok", "job_id": req.job_id, "state": worker.state}
 
@@ -300,6 +311,11 @@ async def stop_recorded_job(
 ):
     _capture_running_loop()
     worker = _JOBS.get(req.job_id)
+    meta = _JOBS_META.get(req.job_id)
+    
+    if meta and current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only control jobs you uploaded.")
+        
     if worker:
         worker.stop()
     meta = _JOBS_META.get(req.job_id)
@@ -330,6 +346,37 @@ def get_recorded_job_status(
         "total_detections": worker.total_detections if worker else 0,
         "processing_fps": worker.processing_fps if worker else 0.0,
     }
+
+
+@router.delete("/api/v1/recorded/{job_id}")
+def delete_recorded_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("dept_admin", "operator")),
+):
+    """
+    Cancel a job, remove it from memory, and delete the uploaded media file from disk.
+    """
+    meta = _JOBS_META.get(job_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if current_user.role != "dept_admin" and meta.get("uploaded_by") != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only delete jobs you uploaded.")
+
+    # Stop the worker if running
+    worker = _JOBS.get(job_id)
+    if worker:
+        worker.stop()
+        del _JOBS[job_id]
+
+    # Delete physical file
+    target_path = Path(meta["saved_path"])
+    target_path.unlink(missing_ok=True)
+
+    del _JOBS_META[job_id]
+
+    return {"status": "success", "job_id": job_id, "action": "deleted"}
 
 
 # ── 8. WebSocket Stream ───────────────────────────────────────────
