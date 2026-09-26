@@ -18,31 +18,28 @@ if ENCRYPTION_KEY:
         logger.error(f"Failed to initialize Fernet with VMS_ENCRYPTION_KEY: {e}")
 
 def encrypt_config(config_dict: Dict[str, Any]) -> str:
-    """Encrypt a dictionary into a JSON string, then Fernet encrypt it if key is available."""
+    """Encrypt a dictionary into a JSON string, then wrap it for JSONB storage if encrypted."""
     config_str = json.dumps(config_dict)
     if _fernet:
-        return _fernet.encrypt(config_str.encode()).decode()
+        encrypted = _fernet.encrypt(config_str.encode()).decode()
+        return json.dumps({"fernet": encrypted})
     
     # Fallback to plain JSON if no encryption key (e.g., local dev without key)
     # Warning: In production, lack of a key means credentials are saved in plaintext.
     return config_str
 
-def decrypt_config(encrypted_str: Optional[str]) -> Dict[str, Any]:
-    """Decrypt a Fernet-encrypted JSON string back to a dictionary."""
-    if not encrypted_str:
+def decrypt_config(config_data: Any) -> Dict[str, Any]:
+    """Decrypt a dictionary that might contain a 'fernet' key back to the original dictionary."""
+    if not config_data or not isinstance(config_data, dict):
         return {}
         
-    # Check if it looks like a Fernet token (starts with 'gAAAAA')
-    if _fernet and encrypted_str.startswith("gAAAAA"):
+    if _fernet and "fernet" in config_data:
         try:
-            decrypted = _fernet.decrypt(encrypted_str.encode()).decode()
+            decrypted = _fernet.decrypt(config_data["fernet"].encode()).decode()
             return json.loads(decrypted)
         except Exception as e:
             logger.error(f"Failed to decrypt config: {e}")
             return {}
             
-    # If not encrypted or no key, just parse as plain JSON
-    try:
-        return json.loads(encrypted_str)
-    except Exception:
-        return {}
+    # If not encrypted or no key, just return the dict
+    return config_data

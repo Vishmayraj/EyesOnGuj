@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_user, require_role
 from shared.db.models import User as UserModel
 from shared.db.session import get_db
+from shared.security import encrypt_config
 from model3_federation.bus.event_bus import FederationEventBus
 from model3_federation.correlation.engine import CorrelationEngine
 from model3_federation.registration import register_adapter, register_adapter_in_request, load_dynamic_adapters
@@ -458,7 +459,7 @@ async def create_system(
         "vendor": payload.vendor or adapter.vendor,
         "protocol": payload.adapter_type,
         "adapter_type": payload.adapter_type,
-        "config": json.dumps(payload.config or {}),
+        "config": encrypt_config(payload.config or {}),
         "ownership": payload.ownership,
         "dept": payload.department_id,
         "status": "connected" if connected else "disconnected",
