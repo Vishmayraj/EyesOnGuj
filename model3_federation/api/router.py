@@ -526,9 +526,18 @@ def update_system(
     current_user: UserModel = Depends(require_role("dept_admin", "operator")),
 ) -> dict[str, Any]:
     """Edit name/vendor/department/ownership on an existing vms_systems row."""
-    exists = db.execute(text("SELECT 1 FROM vms_systems WHERE id = :id"), {"id": system_id}).fetchone()
-    if exists is None:
+    # BUG-003 fix: read department_id to enforce ownership before allowing update
+    row = db.execute(
+        text("SELECT department_id FROM vms_systems WHERE id = :id"), {"id": system_id}
+    ).fetchone()
+    if row is None:
         raise HTTPException(status_code=404, detail="System not found")
+
+    if current_user.department_id and str(row[0]) != str(current_user.department_id):
+        raise HTTPException(
+            status_code=403,
+            detail="You can only modify VMS systems belonging to your own department.",
+        )
 
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
@@ -560,15 +569,24 @@ def delete_system(
     current_user: UserModel = Depends(require_role("dept_admin", "operator")),
 ) -> dict[str, str]:
     """
-    Delete a manually-onboarded (or adapter-registered) vms_systems row —
+    Delete a manually-onboarded (or adapter-registered) vms_systems row --
     refused with 409 while it still has cameras, rather than silently
     orphaning them: cameras.vms_system_id is ON DELETE SET NULL, so
     without this check a delete here would quietly turn federated
     cameras into what looks like main-grid ones instead of failing loudly.
     """
-    exists = db.execute(text("SELECT 1 FROM vms_systems WHERE id = :id"), {"id": system_id}).fetchone()
-    if exists is None:
+    # BUG-004 fix: read department_id to enforce ownership before allowing deletion
+    row = db.execute(
+        text("SELECT department_id FROM vms_systems WHERE id = :id"), {"id": system_id}
+    ).fetchone()
+    if row is None:
         raise HTTPException(status_code=404, detail="System not found")
+
+    if current_user.department_id and str(row[0]) != str(current_user.department_id):
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete VMS systems belonging to your own department.",
+        )
 
     camera_count = db.execute(text(
         "SELECT count(*) FROM cameras WHERE vms_system_id = :id"
@@ -590,11 +608,28 @@ def delete_system(
 @router.get("/cameras")
 def get_federated_cameras(
     system_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """Federated cameras (cameras with a non-null vms_system_id), optionally filtered by system_id."""
-    q = """
+    # BUG-011 fix: scope to current user's department
+    where_parts = []
+    params: dict = {}
+    if system_id:
+        where_parts.append("c.vms_system_id = :sys")
+        params["sys"] = system_id
+    if current_user.department_id:
+        where_parts.append("vs.department_id = :dept_id")
+        params["dept_id"] = str(current_user.department_id)
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    # BUG-029 fix: add pagination
+    params["limit"] = limit
+    params["offset"] = offset
+
+    q = f"""
         SELECT c.id, c.vms_system_id, c.source_grid_id, c.name,
                c.location_label, c.is_active,
                ST_Y(c.location::geometry) AS lat,
@@ -602,13 +637,10 @@ def get_federated_cameras(
                vs.name AS system_name, vs.vendor
         FROM   cameras c
         JOIN   vms_systems vs ON vs.id = c.vms_system_id
+        {where_clause}
+        ORDER BY vs.name, c.name
+        LIMIT :limit OFFSET :offset
     """
-    params: dict = {}
-    if system_id:
-        q += " WHERE c.vms_system_id = :sys"
-        params["sys"] = system_id
-    q += " ORDER BY vs.name, c.name"
-
     rows = db.execute(text(q), params).fetchall()
     return [
         {
@@ -632,11 +664,31 @@ def get_federated_events(
     system_id: Optional[str] = Query(None),
     plate: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """Recent federated detections (cameras with a non-null vms_system_id). Filterable by system_id and plate."""
-    q = """
+    # BUG-012 fix: always filter by current user's department
+    where_parts = ["c.vms_system_id IS NOT NULL"]
+    params: dict = {}
+    if current_user.department_id:
+        where_parts.append("vs.department_id = :dept_id")
+        params["dept_id"] = str(current_user.department_id)
+    if system_id:
+        where_parts.append("c.vms_system_id = :sys")
+        params["sys"] = system_id
+    if plate:
+        from model3_federation.correlation.engine import _normalize_plate
+        params["plate"] = _normalize_plate(plate)
+        where_parts.append("d.detected_plate = :plate")
+
+    # BUG-029 fix: add pagination
+    params["lim"] = limit
+    params["off"] = offset
+
+    where_clause = "WHERE " + " AND ".join(where_parts)
+    q = f"""
         SELECT d.id, c.vms_system_id, d.event_type, d.detected_plate,
                d.confidence, d.vehicle_type, d."timestamp", d.source_timestamp,
                vs.name AS system_name, vs.vendor,
@@ -644,19 +696,9 @@ def get_federated_events(
         FROM   detections d
         JOIN   cameras c ON c.id = d.camera_id
         JOIN   vms_systems vs ON vs.id = c.vms_system_id
-        WHERE  c.vms_system_id IS NOT NULL
+        {where_clause}
+        ORDER BY d."timestamp" DESC LIMIT :lim OFFSET :off
     """
-    params: dict = {}
-    if system_id:
-        q += " AND c.vms_system_id = :sys"
-        params["sys"] = system_id
-    if plate:
-        from model3_federation.correlation.engine import _normalize_plate
-        params["plate"] = _normalize_plate(plate)
-        q += " AND d.detected_plate = :plate"
-    q += " ORDER BY d.\"timestamp\" DESC LIMIT :lim"
-    params["lim"] = limit
-
     rows = db.execute(text(q), params).fetchall()
     return [
         {
@@ -745,21 +787,28 @@ def get_correlations(
 @router.get("/correlations/track")
 def track_vehicle(
     plate: str = Query(..., description="Vehicle plate number to track across all VMS systems"),
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> dict[str, Any]:
     """
-    Full multi-system route for a specific plate number. Now that cameras
-    live in one shared table, this naturally covers sightings from both
-    the main grid and federated VMS systems, not just federated ones.
+    Full multi-system route for a specific plate number.
+    BUG-007 fix: scoped to current user's department to prevent cross-department tracking.
     """
     from model3_federation.correlation.engine import _normalize_plate
     plate_norm = _normalize_plate(plate)
     if not plate_norm:
         raise HTTPException(status_code=400, detail="plate parameter is required")
 
+    # BUG-007 fix: restrict sightings to user's department
+    dept_filter = ""
+    params: dict = {"p": plate_norm, "lim": limit}
+    if current_user.department_id:
+        dept_filter = "AND (vs.department_id = :dept_id OR c.vms_system_id IS NULL)"
+        params["dept_id"] = str(current_user.department_id)
+
     rows = db.execute(text(
-        """
+        f"""
         SELECT d.id, c.vms_system_id, d."timestamp", d.source_timestamp,
                d.confidence, d.vehicle_type,
                c.name AS camera_name, c.location_label,
@@ -770,10 +819,11 @@ def track_vehicle(
         JOIN   cameras c ON c.id = d.camera_id
         LEFT JOIN vms_systems vs ON vs.id = c.vms_system_id
         WHERE  d.detected_plate = :p
+        {dept_filter}
         ORDER  BY d."timestamp" ASC
-        LIMIT  100
+        LIMIT  :lim
         """
-    ), {"p": plate_norm}).fetchall()
+    ), params).fetchall()
 
     sightings = [
         {
@@ -806,9 +856,16 @@ def get_federated_alerts(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
-    """Federation-originated watchlist alerts (from cameras with a non-null vms_system_id), most recent first."""
+    """Federation-originated watchlist alerts, most recent first. Scoped to current user's department."""
+    # BUG-006 fix: add department filter so cross-department alerts are not disclosed
+    dept_filter = ""
+    params: dict = {"lim": limit}
+    if current_user.department_id:
+        dept_filter = "AND vs.department_id = :dept_id"
+        params["dept_id"] = str(current_user.department_id)
+
     rows = db.execute(text(
-        """
+        f"""
         SELECT a.id, a.created_at, a.severity, a.alert_type,
                a.acknowledged_at,
                d.detected_plate,
@@ -818,10 +875,12 @@ def get_federated_alerts(
         JOIN   detections d ON d.id = a.detection_id
         JOIN   cameras c ON c.id = d.camera_id
         JOIN   vms_systems vs ON vs.id = c.vms_system_id
+        WHERE  c.vms_system_id IS NOT NULL
+        {dept_filter}
         ORDER  BY a.created_at DESC
         LIMIT  :lim
         """
-    ), {"lim": limit}).fetchall()
+    ), params).fetchall()
 
     return [
         {
@@ -867,7 +926,7 @@ def acknowledge_alert(
 async def simulate_burst(
     system_id: str,
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(require_role("dept_admin", "operator")),  # BUG-005 fix: was get_current_user
 ) -> dict[str, Any]:
     """
     Trigger a burst of 10 events from the specified VMS system.
