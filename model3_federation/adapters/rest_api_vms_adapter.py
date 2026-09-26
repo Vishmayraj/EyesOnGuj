@@ -104,18 +104,23 @@ class RestApiVMSAdapter(VMSAdapter):
         return {header_name: self._config["api_key"]}
 
     async def connect(self) -> bool:
-        from model3_federation.adapters.registry import is_safe_url
+        from model3_federation.adapters.registry import resolve_safe_url
         base_url = self._config.get("base_url")
         api_key = self._config.get("api_key")
         if not base_url or not api_key:
             self.log_error("Missing base_url or api_key in config — cannot connect.")
             return False
-        if not is_safe_url(base_url):
+            
+        safe, pinned_url, host = resolve_safe_url(base_url)
+        if not safe:
             self.log_error("SSRF Protection: blocked attempt to connect to unsafe or private URL.")
             return False
             
         try:
-            resp = await self._client.get(base_url, headers=self._headers(), params=self._query_params)
+            headers = self._headers()
+            if host:
+                headers["Host"] = host
+            resp = await self._client.get(pinned_url, headers=headers, params=self._query_params)
             resp.raise_for_status()
             self._connected = True
             self.log_info(f"Connected to {base_url}")
@@ -131,14 +136,18 @@ class RestApiVMSAdapter(VMSAdapter):
         if not self._connected:
             return []
         
-        from model3_federation.adapters.registry import is_safe_url
+        from model3_federation.adapters.registry import resolve_safe_url
         base_url = self._config["base_url"]
-        if not is_safe_url(base_url):
+        safe, pinned_url, host = resolve_safe_url(base_url)
+        if not safe:
             self.log_error("SSRF Protection: blocked attempt to connect to unsafe or private URL.")
             return []
             
         try:
-            resp = await self._client.get(base_url, headers=self._headers(), params=self._query_params)
+            headers = self._headers()
+            if host:
+                headers["Host"] = host
+            resp = await self._client.get(pinned_url, headers=headers, params=self._query_params)
             resp.raise_for_status()
             payload = resp.json()
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:

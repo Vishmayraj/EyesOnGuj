@@ -18,28 +18,33 @@ from urllib.parse import urlparse
 import socket
 import ipaddress
 
-def is_safe_url(url: Optional[str]) -> bool:
+def resolve_safe_url(url: Optional[str]) -> tuple[bool, Optional[str], Optional[str]]:
     if not url:
-        return True
+        return True, "", ""
     try:
         parsed = urlparse(url)
         if parsed.scheme not in ["http", "https", "rtsp"]:
-            return False
+            return False, "", ""
         host = parsed.hostname
         if not host:
-            return False
+            return False, "", ""
             
         ip = socket.gethostbyname(host)
         ip_obj = ipaddress.ip_address(ip)
         
         if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
-            return False
+            return False, "", ""
         if str(ip_obj) == "169.254.169.254":
-            return False
+            return False, "", ""
             
-        return True
+        pinned_url = parsed._replace(netloc=f"{ip}:{parsed.port}" if parsed.port else ip).geturl()
+        return True, pinned_url, host
     except Exception:
-        return False
+        return False, "", ""
+
+def is_safe_url(url: Optional[str]) -> bool:
+    safe, _, _ = resolve_safe_url(url)
+    return safe
 
 from app.auth.dependencies import get_current_user, require_role
 from shared.db.models import User as UserModel

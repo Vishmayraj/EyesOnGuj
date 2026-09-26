@@ -55,7 +55,7 @@ def _generic_handler(request: httpx.Request) -> httpx.Response:
 
 def _generic_adapter(monkeypatch, handler=_generic_handler) -> RestApiVMSAdapter:
     _install_mock_transport(monkeypatch, handler)
-    monkeypatch.setattr("model3_federation.adapters.registry.is_safe_url", lambda x: True)
+    monkeypatch.setattr("model3_federation.adapters.rest_api_vms_adapter.resolve_safe_url", lambda x: (True, x, "example.invalid"))
     return RestApiVMSAdapter("sys-1", "Generic Test VMS", {
         "base_url": "https://example.invalid/cameras",
         "api_key": "secret-key",

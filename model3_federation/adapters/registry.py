@@ -40,16 +40,16 @@ import socket
 import ipaddress
 from urllib.parse import urlparse
 
-def is_safe_url(url: str) -> bool:
+def resolve_safe_url(url: str) -> tuple[bool, str, str]:
     if not url:
-        return True
+        return True, "", ""
     try:
         parsed = urlparse(url)
         if parsed.scheme not in ["http", "https", "rtsp"]:
-            return False
+            return False, "", ""
         host = parsed.hostname
         if not host:
-            return False
+            return False, "", ""
         
         # Resolve the hostname to prevent DNS rebinding or obfuscated IPs
         ip = socket.gethostbyname(host)
@@ -57,15 +57,21 @@ def is_safe_url(url: str) -> bool:
         
         # Block private, loopback, and link-local ranges
         if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
-            return False
+            return False, "", ""
         
-        # Block cloud metadata specifically just in case (is_link_local covers 169.254.x.x but let's be explicit)
+        # Block cloud metadata specifically just in case
         if str(ip_obj) == "169.254.169.254":
-            return False
+            return False, "", ""
             
-        return True
+        # Rebuild URL with IP
+        pinned_url = parsed._replace(netloc=f"{ip}:{parsed.port}" if parsed.port else ip).geturl()
+        return True, pinned_url, host
     except Exception:
-        return False
+        return False, "", ""
+
+def is_safe_url(url: str) -> bool:
+    safe, _, _ = resolve_safe_url(url)
+    return safe
 
 
 @dataclass
