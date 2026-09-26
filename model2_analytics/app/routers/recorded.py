@@ -131,7 +131,18 @@ def get_cameras_for_association(
     ]
 
 
-# ── 2. Video Upload & Probing ─────────────────────────────────────
+def _probe_video(target_path: str) -> tuple:
+    cap = cv2.VideoCapture(target_path)
+    if not cap.isOpened():
+        return False, 0, 0.0, 0, 0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+    fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+    cap.release()
+    return True, total_frames, fps, width, height
+
+
 @router.post("/api/v1/recorded/upload")
 async def upload_recorded_video(
     request: Request,
@@ -190,17 +201,15 @@ async def upload_recorded_video(
         logger.error(f"Failed to save upload: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to write video file: {str(e)}")
 
-    # Probe video metadata using OpenCV
-    cap = cv2.VideoCapture(str(target_path))
-    if not cap.isOpened():
+    # Probe video metadata using OpenCV in a thread executor to avoid blocking the event loop
+    loop = asyncio.get_event_loop()
+    is_valid, total_frames, fps, width, height = await loop.run_in_executor(
+        None, _probe_video, str(target_path)
+    )
+    
+    if not is_valid:
         target_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Invalid or unreadable video file")
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
-    fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
-    cap.release()
     
     if width > 4096 or height > 4096:
         target_path.unlink(missing_ok=True)
