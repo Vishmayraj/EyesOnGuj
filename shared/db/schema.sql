@@ -81,7 +81,8 @@ CREATE TABLE vms_systems (
                                                          -- for the security caveat before this holds real secrets.
     camera_count    INT NOT NULL DEFAULT 0,
     last_heartbeat  TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_vms_systems_department ON vms_systems (department_id);
 

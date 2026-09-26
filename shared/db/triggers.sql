@@ -35,6 +35,11 @@ CREATE TRIGGER trg_cameras_set_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
+CREATE TRIGGER trg_vms_systems_set_updated_at
+    BEFORE UPDATE ON vms_systems
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
 -- ------------------------------------------------------------
 -- 2. camera audit trail
 -- ------------------------------------------------------------
