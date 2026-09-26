@@ -454,7 +454,7 @@ class PersonAlert(Base):
         UUID(as_uuid=True), ForeignKey("persons_watchlist.id", ondelete="CASCADE"), nullable=False
     )
     camera_id = Column(
-        Text, nullable=True, default="prerecorded"
+        UUID(as_uuid=True), ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True, default=None
     )
     similarity_score = Column(REAL, nullable=False)
     distance = Column(REAL, nullable=False)

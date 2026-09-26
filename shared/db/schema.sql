@@ -252,7 +252,7 @@ CREATE INDEX idx_alerts_created ON alerts (created_at DESC);
 CREATE TABLE person_alerts (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     person_id          UUID NOT NULL REFERENCES persons_watchlist(id) ON DELETE CASCADE,
-    camera_id          TEXT DEFAULT 'prerecorded',
+    camera_id          UUID REFERENCES cameras(id) ON DELETE SET NULL,
     similarity_score   REAL NOT NULL,
     distance           REAL NOT NULL,
     face_crop_path     TEXT,

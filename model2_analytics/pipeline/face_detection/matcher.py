@@ -270,8 +270,8 @@ class FaceMatchEngine:
                     cv2.imwrite(str(crop_dest), face_crop)
                     rel_crop_path = f"/api/v1/face-detection/crops/{crop_filename}"
 
-                    # Insert into person_alerts table (camera_id is TEXT: stores 'prerecorded' or camera name)
-                    resolved_cam_id = str(camera_id) if camera_id else "prerecorded"
+                    # Insert into person_alerts table (camera_id is UUID FK, NULL for prerecorded)
+                    resolved_cam_id = str(camera_id) if camera_id else None
                     if active_db:
                         try:
                             insert_query = text("""
