@@ -192,6 +192,13 @@ async def lifespan(app: FastAPI):
     # skipped the start above - stop_federation_services() only cancels
     # whatever is in _tasks, which stays [] if nothing was ever started.
     await stop_federation_services()
+    
+    # BUG-029: Close dangling websockets to allow clean shutdown
+    try:
+        from model2_analytics.app.routers.recorded import close_all_websockets
+        await close_all_websockets()
+    except Exception as e:
+        logger.error(f"Error closing websockets: {e}")
 
 
 app = FastAPI(

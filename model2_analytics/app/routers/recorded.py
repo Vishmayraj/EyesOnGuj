@@ -453,3 +453,13 @@ async def ws_recorded_feed(
     finally:
         _JOB_WS[job_id].discard(websocket)
         logger.info(f"[{job_id}] WebSocket client disconnected. Remaining: {len(_JOB_WS[job_id])}")
+
+async def close_all_websockets():
+    """Close all open websockets during app shutdown."""
+    for ws_set in list(_JOB_WS.values()):
+        for ws in list(ws_set):
+            try:
+                await ws.close(code=status.WS_1001_GOING_AWAY)
+            except Exception:
+                pass
+    _JOB_WS.clear()
