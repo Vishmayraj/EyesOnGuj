@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = _INSECURE_DEFAULT_SECRET_KEY
     ALGORITHM: str = "HS256"
+    
+    # BUG-015 fix: explicitly configure allowed origins for CORS
+    ALLOWED_ORIGINS: str = "http://localhost:8000,http://127.0.0.1:8000"
+
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours
 
     # Login rate limiting / lockout (AuditReport1.md finding 2.2). Keyed on

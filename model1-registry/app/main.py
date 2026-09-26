@@ -22,6 +22,7 @@ logging.basicConfig(
 )
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -199,6 +200,15 @@ app = FastAPI(
     description="Model 1: Camera registry, GIS mapping, and department/district management for Gujarat's CCTV network.",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# BUG-015 fix: configure strict CORS to prevent cross-origin exploits
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",")],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 # ── Templates & static ──────────────────────────────────────────
