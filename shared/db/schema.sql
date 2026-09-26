@@ -163,7 +163,7 @@ CREATE UNIQUE INDEX idx_cameras_source_per_system ON cameras (vms_system_id, sou
 
 CREATE TABLE status_history (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    camera_id     UUID NOT NULL REFERENCES cameras(id) ON DELETE RESTRICT,
+    camera_id     UUID NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
     changed_field TEXT NOT NULL,
     old_value     TEXT,
     new_value     TEXT,
