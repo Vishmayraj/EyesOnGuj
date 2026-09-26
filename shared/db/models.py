@@ -109,6 +109,7 @@ class User(Base):
         UUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL")
     )
     is_active = Column(Boolean, nullable=False, default=True)
+    token_version = Column(Integer, nullable=False, server_default="0", default=0)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default="now()")
 
     department = relationship("Department", back_populates="users")

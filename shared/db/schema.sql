@@ -37,6 +37,7 @@ CREATE TABLE users (
     role            TEXT NOT NULL CHECK (role IN ('dept_admin', 'operator', 'viewer')),
     department_id   UUID REFERENCES departments(id) ON DELETE SET NULL,
     is_active       BOOLEAN NOT NULL DEFAULT true,
+    token_version   INTEGER NOT NULL DEFAULT 0,  -- incremented on role/dept change to invalidate old JWTs
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_users_department ON users (department_id);

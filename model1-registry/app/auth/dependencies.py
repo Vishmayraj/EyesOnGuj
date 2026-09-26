@@ -64,6 +64,14 @@ def get_current_user(
             detail="User not found or account deactivated.",
         )
 
+    # BUG-001 fix: validate token_version so role/department changes take effect immediately
+    token_tv = payload.get("tv")
+    if token_tv is not None and token_tv != user.token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session invalidated due to account changes. Please log in again.",
+        )
+
     # CSRF Protection: Enforce on state-changing methods if using cookie auth
     if getattr(request, "method", None) in ["POST", "PUT", "PATCH", "DELETE"]:
         auth_header = request.headers.get("Authorization")

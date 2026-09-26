@@ -86,6 +86,7 @@ def login(
         "username": user.username,
         "role": user.role,
         "department_id": str(user.department_id) if user.department_id else None,
+        "tv": user.token_version,  # BUG-001: token version — invalidated when role/dept changes
     }
     access_token = create_access_token(token_data)
 
