@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = _INSECURE_DEFAULT_SECRET_KEY
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours
+    
+    TRUSTED_PROXIES: str = "127.0.0.1"
 
     # Login rate limiting / lockout (AuditReport1.md finding 2.2). Keyed on
     # (client IP, username) - see app/auth/rate_limit.py.

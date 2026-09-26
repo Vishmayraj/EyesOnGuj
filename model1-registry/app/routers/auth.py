@@ -56,6 +56,15 @@ def login(
 ):
     """Authenticate user with username and password, issuing an httpOnly JWT cookie."""
     client_ip = request.client.host if request.client else "unknown"
+    
+    # Trust X-Forwarded-For only if the request comes from a trusted proxy
+    trusted_proxies = [p.strip() for p in settings.TRUSTED_PROXIES.split(",")]
+    if client_ip in trusted_proxies:
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            # Take the first IP in the list (the original client)
+            client_ip = forwarded_for.split(",")[0].strip()
+            
     rl_key = rate_limit_key(client_ip, credentials.username)
 
     retry_after = login_rate_limiter.seconds_until_unlocked(rl_key)
