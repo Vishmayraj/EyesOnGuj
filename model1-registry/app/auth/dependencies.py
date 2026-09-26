@@ -98,7 +98,7 @@ def get_optional_current_user(
         user = db.query(UserModel).filter(UserModel.id == user_id).first()
         if user and user.is_active:
             return user
-    except Exception:
+    except ValueError:
         return None
 
     return None
