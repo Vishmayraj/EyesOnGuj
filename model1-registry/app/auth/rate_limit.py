@@ -21,68 +21,51 @@ out of their own account from an arbitrary IP - they'd need to be
 attacking from the same IP the real user logs in from.
 """
 
-import threading
 import time
-from typing import Dict, List
-
+import redis
+from typing import Dict, List, Optional
 
 class LoginRateLimiter:
-    def __init__(self, max_attempts: int, window_seconds: float, lockout_seconds: float):
+    def __init__(self, max_attempts: int, window_seconds: float, lockout_seconds: float, redis_url: str):
         self.max_attempts = max_attempts
-        self.window_seconds = window_seconds
-        self.lockout_seconds = lockout_seconds
-        self._lock = threading.Lock()
-        # key -> failure timestamps within the current sliding window
-        self._failures: Dict[str, List[float]] = {}
-        # key -> unix time the lockout expires
-        self._locked_until: Dict[str, float] = {}
+        self.window_seconds = int(window_seconds)
+        self.lockout_seconds = int(lockout_seconds)
+        self._redis = redis.from_url(redis_url, decode_responses=True)
 
-    def _prune(self, key: str, now: float) -> None:
-        cutoff = now - self.window_seconds
-        pruned = [t for t in self._failures.get(key, []) if t > cutoff]
-        if pruned:
-            self._failures[key] = pruned
-        else:
-            self._failures.pop(key, None)
+    def _lock_key(self, key: str) -> str:
+        return f"login:lock:{key}"
+
+    def _fail_key(self, key: str) -> str:
+        return f"login:fails:{key}"
 
     def seconds_until_unlocked(self, key: str) -> float:
         """0.0 if `key` may attempt a login right now, else how many
         seconds remain before it can."""
-        with self._lock:
-            until = self._locked_until.get(key)
-            if until is None:
-                return 0.0
-            now = time.time()
-            if now >= until:
-                self._locked_until.pop(key, None)
-                self._failures.pop(key, None)
-                return 0.0
-            return until - now
+        ttl = self._redis.ttl(self._lock_key(key))
+        if ttl > 0:
+            return float(ttl)
+        return 0.0
 
     def record_failure(self, key: str) -> None:
-        with self._lock:
-            now = time.time()
-            self._prune(key, now)
-            self._failures.setdefault(key, []).append(now)
-            if len(self._failures[key]) >= self.max_attempts:
-                self._locked_until[key] = now + self.lockout_seconds
+        fail_key = self._fail_key(key)
+        fails = self._redis.incr(fail_key)
+        if fails == 1:
+            self._redis.expire(fail_key, self.window_seconds)
+        
+        if fails >= self.max_attempts:
+            self._redis.setex(self._lock_key(key), self.lockout_seconds, "1")
 
     def record_success(self, key: str) -> None:
         """A successful login clears any accumulated failure count for
         this key - only *consecutive* failures should ever lock someone
         out, not a lifetime tally."""
-        with self._lock:
-            self._failures.pop(key, None)
-            self._locked_until.pop(key, None)
+        self._redis.delete(self._fail_key(key))
+        self._redis.delete(self._lock_key(key))
 
     def reset_all(self) -> None:
-        """Test-only convenience - production code never calls this.
-        Without it, the module-level singleton below (shared across every
-        test in the suite, same pattern as streams.py's _STREAM_READERS)
-        would leak failure counts between unrelated tests."""
-        with self._lock:
-            self._failures.clear()
-            self._locked_until.clear()
+        """Test-only convenience - production code never calls this."""
+        for k in self._redis.scan_iter("login:*"):
+            self._redis.delete(k)
 
 
 def rate_limit_key(client_ip: str, username: str) -> str:
@@ -96,7 +79,9 @@ def _build_default_limiter() -> LoginRateLimiter:
         max_attempts=settings.LOGIN_MAX_ATTEMPTS,
         window_seconds=settings.LOGIN_WINDOW_SECONDS,
         lockout_seconds=settings.LOGIN_LOCKOUT_SECONDS,
+        redis_url=settings.REDIS_URL,
     )
 
 
 login_rate_limiter = _build_default_limiter()
+
