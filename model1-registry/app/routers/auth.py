@@ -89,7 +89,15 @@ def login(
     }
     access_token = create_access_token(token_data)
 
-    csrf_token = str(uuid.uuid4())
+    # BUG-017 fix: derive CSRF token as HMAC of the JWT so it's session-bound
+    import hmac
+    import hashlib
+    csrf_token = hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        access_token.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
     
     # Set httpOnly cookie
     response.set_cookie(

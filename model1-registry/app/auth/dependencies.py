@@ -68,10 +68,16 @@ def get_current_user(
     if getattr(request, "method", None) in ["POST", "PUT", "PATCH", "DELETE"]:
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
-            # Client relies on cookies, so enforce CSRF
-            csrf_cookie = request.cookies.get("csrf_token")
             csrf_header = request.headers.get("x-csrf-token")
-            if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+            import hmac
+            import hashlib
+            from app.config import settings
+            expected_csrf = hmac.new(
+                settings.SECRET_KEY.encode("utf-8"),
+                token.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            if not csrf_header or not hmac.compare_digest(csrf_header, expected_csrf):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="CSRF token missing or invalid.",
