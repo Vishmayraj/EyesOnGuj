@@ -120,8 +120,7 @@ def test_recorded_status_requires_auth(anon_client):
     assert resp.status_code == 401
 
 
-def test_recorded_status_accessible_to_any_logged_in_role(viewer_client):
-    # A random job_id won't exist, so this asserts "past the auth check"
-    # (not a 401/403) rather than a specific success status/body shape.
+def test_recorded_status_inaccessible_to_viewer_role(viewer_client):
+    # A viewer should not be able to access the status endpoint
     resp = viewer_client.get(f"/api/v1/recorded/status/{uuid.uuid4()}")
-    assert resp.status_code not in (401, 403)
+    assert resp.status_code == 403

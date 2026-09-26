@@ -345,7 +345,7 @@ async def stop_recorded_job(
 @router.get("/api/v1/recorded/status/{job_id}")
 def get_recorded_job_status(
     job_id: str,
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(require_role("dept_admin", "operator")),
 ):
     meta = _JOBS_META.get(job_id)
     if not meta:
