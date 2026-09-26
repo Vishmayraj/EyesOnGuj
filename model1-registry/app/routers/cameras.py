@@ -385,20 +385,22 @@ def get_camera_history(
         raise HTTPException(status_code=404, detail="Camera not found")
 
     rows = (
-        db.query(StatusHistoryModel)
+        db.query(StatusHistoryModel, UserModel.username)
+        .outerjoin(UserModel, UserModel.id == StatusHistoryModel.changed_by)
         .filter(StatusHistoryModel.camera_id == camera_id)
         .order_by(StatusHistoryModel.changed_at.desc())
         .all()
     )
     return [
         {
-            "id": str(r.id),
-            "camera_id": str(r.camera_id),
-            "changed_field": r.changed_field,
-            "old_value": r.old_value,
-            "new_value": r.new_value,
-            "changed_by": str(r.changed_by) if r.changed_by else None,
-            "changed_at": r.changed_at.isoformat(),
+            "id": str(r[0].id),
+            "camera_id": str(r[0].camera_id),
+            "changed_field": r[0].changed_field,
+            "old_value": r[0].old_value,
+            "new_value": r[0].new_value,
+            "changed_by": str(r[0].changed_by) if r[0].changed_by else None,
+            "changed_by_username": r[1] if r[1] else None,
+            "changed_at": r[0].changed_at.isoformat(),
         }
         for r in rows
     ]
