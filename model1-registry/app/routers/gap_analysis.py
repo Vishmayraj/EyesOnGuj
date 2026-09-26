@@ -49,8 +49,15 @@ def get_gap_analysis(
     """
     # Convert km radius to meters for PostGIS geography ST_Buffer
     radius_meters = radius_km * 1000.0
+    
+    # BUG-013 fix: department scoping
+    params = {"radius_m": radius_meters}
+    dept_filter = ""
+    if current_user.department_id:
+        dept_filter = "AND c.department_id = :dept_id"
+        params["dept_id"] = str(current_user.department_id)
 
-    query_str = text("""
+    query_str = text(f"""
         SELECT
             d.id AS district_id,
             d.name AS district_name,
@@ -73,12 +80,12 @@ def get_gap_analysis(
                 END
             ) AS uncovered_geojson
         FROM districts d
-        LEFT JOIN cameras c ON c.district_id = d.id AND c.is_active = true AND c.location IS NOT NULL
+        LEFT JOIN cameras c ON c.district_id = d.id AND c.is_active = true AND c.location IS NOT NULL {dept_filter}
         GROUP BY d.id, d.name, d.boundary
         ORDER BY camera_count ASC, d.name ASC;
     """)
 
-    rows = db.execute(query_str, {"radius_m": radius_meters}).fetchall()
+    rows = db.execute(query_str, params).fetchall()
 
     results = []
 
