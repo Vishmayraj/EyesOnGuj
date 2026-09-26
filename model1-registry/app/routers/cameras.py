@@ -200,6 +200,8 @@ async def bulk_import(
     errored = 0
     errors: list[str] = []
 
+    db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": str(current_user.id)})
+
     for i, row in enumerate(reader, start=2):  # row 1 = header
         try:
             name = row.get("name", "").strip()
@@ -271,7 +273,6 @@ async def bulk_import(
             errored += 1
 
     if created > 0:
-        db.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": str(current_user.id)})
         db.commit()
 
     return BulkImportResult(
