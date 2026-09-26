@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import uuid
+import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -52,6 +53,7 @@ ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 # ── Module-level state & WebSocket hub ───────────────────────────
 _JOBS: Dict[str, PreRecordedVideoWorker] = {}
 _JOBS_META: Dict[str, Dict] = {}
+_JOBS_LOCK = threading.Lock()
 _JOB_WS: Dict[str, Set[WebSocket]] = defaultdict(set)
 _loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -227,7 +229,8 @@ async def upload_recorded_video(
         "department_id": str(current_user.department_id) if current_user.department_id else None,
         "state": "ready",
     }
-    _JOBS_META[job_id] = meta
+    with _JOBS_LOCK:
+        _JOBS_META[job_id] = meta
 
     return {
         "status": "ok",
@@ -251,14 +254,16 @@ async def start_recorded_job(
 ):
     _capture_running_loop()
     job_id = req.job_id
-    meta = _JOBS_META.get(job_id)
+    with _JOBS_LOCK:
+        meta = _JOBS_META.get(job_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Job not found. Upload video first.")
 
     _enforce_job_authz(meta, current_user)
 
     # Stop any existing worker for this job
-    existing = _JOBS.get(job_id)
+    with _JOBS_LOCK:
+        existing = _JOBS.get(job_id)
     if existing and existing.is_running:
         existing.stop()
 
@@ -272,8 +277,9 @@ async def start_recorded_job(
         event_callback=on_recorded_worker_event,
         db_session_factory=_get_db,
     )
-    _JOBS[job_id] = worker
-    meta["state"] = "running"
+    with _JOBS_LOCK:
+        _JOBS[job_id] = worker
+        meta["state"] = "running"
     worker.start()
 
     return {"status": "ok", "job_id": job_id, "state": "running", "speed": worker.speed}
@@ -286,12 +292,14 @@ async def pause_recorded_job(
     current_user: UserModel = Depends(require_role("dept_admin", "operator")),
 ):
     _capture_running_loop()
-    meta = _JOBS_META.get(req.job_id)
+    with _JOBS_LOCK:
+        meta = _JOBS_META.get(req.job_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Job not found")
     _enforce_job_authz(meta, current_user)
 
-    worker = _JOBS.get(req.job_id)
+    with _JOBS_LOCK:
+        worker = _JOBS.get(req.job_id)
     if not worker or not worker.is_running:
         raise HTTPException(status_code=400, detail="Job is not actively running")
 
@@ -306,12 +314,14 @@ async def resume_recorded_job(
     current_user: UserModel = Depends(require_role("dept_admin", "operator")),
 ):
     _capture_running_loop()
-    meta = _JOBS_META.get(req.job_id)
+    with _JOBS_LOCK:
+        meta = _JOBS_META.get(req.job_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Job not found")
     _enforce_job_authz(meta, current_user)
 
-    worker = _JOBS.get(req.job_id)
+    with _JOBS_LOCK:
+        worker = _JOBS.get(req.job_id)
     if not worker:
         raise HTTPException(status_code=404, detail="Job worker not found")
 
@@ -326,17 +336,20 @@ async def stop_recorded_job(
     current_user: UserModel = Depends(require_role("dept_admin", "operator")),
 ):
     _capture_running_loop()
-    meta = _JOBS_META.get(req.job_id)
+    with _JOBS_LOCK:
+        meta = _JOBS_META.get(req.job_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Job not found")
     _enforce_job_authz(meta, current_user)
 
-    worker = _JOBS.get(req.job_id)
-    if worker:
-        worker.stop()
-    meta = _JOBS_META.get(req.job_id)
-    if meta:
-        meta["state"] = "stopped"
+    with _JOBS_LOCK:
+        worker = _JOBS.get(req.job_id)
+        if worker:
+            worker.stop()
+            del _JOBS[req.job_id]
+        meta = _JOBS_META.get(req.job_id)
+        if meta:
+            meta["state"] = "stopped"
 
     return {"status": "ok", "job_id": req.job_id, "state": "stopped"}
 
@@ -347,7 +360,9 @@ def get_recorded_job_status(
     job_id: str,
     current_user: UserModel = Depends(get_current_user),
 ):
-    meta = _JOBS_META.get(job_id)
+    with _JOBS_LOCK:
+        worker = _JOBS.get(job_id)
+        meta = _JOBS_META.get(job_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Job not found")
     _enforce_job_authz(meta, current_user)
@@ -409,7 +424,8 @@ async def ws_recorded_feed(
         return
 
     # Check Authorization (IDOR Fix)
-    meta = _JOBS_META.get(job_id)
+    with _JOBS_LOCK:
+        meta = _JOBS_META.get(job_id)
     if meta:
         if user.role != "dept_admin" and meta.get("uploaded_by") != user.username:
             logger.warning(f"[{job_id}] Unauthorized WebSocket access attempt by {user.username}.")
@@ -427,8 +443,9 @@ async def ws_recorded_feed(
     logger.info(f"[{job_id}] WebSocket client connected. Active: {len(_JOB_WS[job_id])}")
 
     # Send initial state handshake if job exists
-    meta = _JOBS_META.get(job_id)
-    worker = _JOBS.get(job_id)
+    with _JOBS_LOCK:
+        meta = _JOBS_META.get(job_id)
+        worker = _JOBS.get(job_id)
     if meta:
         await websocket.send_text(
             json.dumps(
