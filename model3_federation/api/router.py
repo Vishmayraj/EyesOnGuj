@@ -566,9 +566,12 @@ def delete_system(
     without this check a delete here would quietly turn federated
     cameras into what looks like main-grid ones instead of failing loudly.
     """
-    exists = db.execute(text("SELECT 1 FROM vms_systems WHERE id = :id"), {"id": system_id}).fetchone()
-    if exists is None:
+    row = db.execute(text("SELECT department_id FROM vms_systems WHERE id = :id"), {"id": system_id}).fetchone()
+    if row is None:
         raise HTTPException(status_code=404, detail="System not found")
+        
+    if current_user.department_id and str(row.department_id) != str(current_user.department_id):
+        raise HTTPException(status_code=403, detail="You can only delete systems in your own department")
 
     camera_count = db.execute(text(
         "SELECT count(*) FROM cameras WHERE vms_system_id = :id"
