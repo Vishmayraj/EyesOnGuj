@@ -445,7 +445,13 @@ async def ws_recorded_feed(
 
     try:
         while True:
-            msg = await websocket.receive_text()
+            # BUG-030: Add timeout to prevent stale connections tying up resources
+            try:
+                msg = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+            except asyncio.TimeoutError:
+                logger.info(f"[{job_id}] WebSocket client timed out (no ping received).")
+                break
+                
             if msg == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
     except (WebSocketDisconnect, Exception):
