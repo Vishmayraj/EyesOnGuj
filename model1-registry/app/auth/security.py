@@ -33,13 +33,18 @@ def create_access_token(
     data: dict[str, Any], expires_delta: Optional[timedelta] = None
 ) -> str:
     """Create a JWT access token containing arbitrary payload data."""
+    import uuid as _uuid
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
     if expires_delta:
         expire = now + expires_delta
     else:
         expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire, "iat": now})
+    to_encode.update({
+        "exp": expire,
+        "iat": now,
+        "jti": str(_uuid.uuid4()),  # BUG-010 fix: unique token ID for blocklist
+    })
     encoded_jwt = jwt.encode(
         to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
     )

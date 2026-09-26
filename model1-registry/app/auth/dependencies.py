@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.auth.security import decode_access_token
+from app.auth.token_blocklist import is_blocked
 from shared.db.models import User as UserModel
 from shared.db.session import get_db
 
@@ -46,6 +47,14 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired authentication token.",
+        )
+
+    # BUG-010 fix: reject tokens that were explicitly revoked at logout
+    jti = payload.get("jti")
+    if jti and is_blocked(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked. Please log in again.",
         )
 
     user_id_str = payload.get("sub")

@@ -12,7 +12,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth.rate_limit import login_rate_limiter, rate_limit_key
-from app.auth.security import create_access_token, verify_password
+from app.auth.security import create_access_token, decode_access_token, verify_password
+from app.auth.token_blocklist import add_to_blocklist
 from app.config import settings
 from shared.db.models import User as UserModel
 from shared.db.session import get_db
@@ -123,11 +124,19 @@ def login(
 
 
 @router.post("/logout")
-def logout(response: Response):
-    """Log out current user by clearing the authentication cookie."""
-    # Match the attributes the cookie was actually set with (samesite,
-    # secure) - some browsers only clear a cookie via Set-Cookie when the
-    # deleting response's attributes line up with how it was set.
+def logout(request: Request, response: Response):
+    """Log out current user: clear cookies and blocklist the JWT so it cannot be replayed."""
+    # BUG-010 fix: blocklist the current JWT's jti so it is rejected even if captured
+    cookie_token = request.cookies.get("access_token", "")
+    if cookie_token.startswith("Bearer "):
+        cookie_token = cookie_token[7:]
+    if cookie_token:
+        payload = decode_access_token(cookie_token)
+        if payload and "jti" in payload:
+            import time
+            remaining_ttl = max(1, int(payload.get("exp", time.time()) - time.time()))
+            add_to_blocklist(payload["jti"], remaining_ttl)
+
     response.delete_cookie(
         key="access_token",
         path="/",
