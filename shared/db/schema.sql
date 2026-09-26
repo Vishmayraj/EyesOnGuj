@@ -281,3 +281,4 @@ CREATE TABLE audit_logs (
 CREATE INDEX idx_audit_logs_user ON audit_logs (user_id);
 CREATE INDEX idx_audit_logs_department ON audit_logs (department_id);
 CREATE INDEX idx_audit_logs_resource ON audit_logs (resource_type, resource_id);
+CREATE INDEX idx_audit_logs_created ON audit_logs (created_at DESC);
