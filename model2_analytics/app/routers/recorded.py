@@ -111,13 +111,16 @@ def get_cameras_for_association(
     current_user: UserModel = Depends(get_current_user),
 ):
     """Returns active cameras with their departments and locations for user selection."""
-    cameras = (
+    query = (
         db.query(CameraModel)
         .options(joinedload(CameraModel.department), joinedload(CameraModel.district))
         .filter(CameraModel.is_active.is_(True))
-        .order_by(CameraModel.name)
-        .all()
     )
+    
+    if current_user.department_id:
+        query = query.filter(CameraModel.department_id == current_user.department_id)
+        
+    cameras = query.order_by(CameraModel.name).all()
     return [
         {
             "id": str(c.id),
