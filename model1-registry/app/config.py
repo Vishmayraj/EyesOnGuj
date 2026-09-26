@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = _INSECURE_DEFAULT_SECRET_KEY
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60   # BUG-009 fix: reduced from 480 (8h) to 60 minutes
 
     # Login rate limiting / lockout (AuditReport1.md finding 2.2). Keyed on
     # (client IP, username) - see app/auth/rate_limit.py.
