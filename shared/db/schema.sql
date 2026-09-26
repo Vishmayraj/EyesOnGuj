@@ -197,7 +197,8 @@ CREATE TABLE persons_watchlist (
     face_embedding VECTOR(512),
     photo_path     TEXT,
     status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'resolved')),
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    department_id  UUID REFERENCES departments(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_persons_watchlist_embedding ON persons_watchlist USING hnsw (face_embedding vector_cosine_ops);
 

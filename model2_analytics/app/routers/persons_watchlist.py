@@ -221,6 +221,7 @@ async def create_watchlist_person(
         face_embedding=embedding,
         photo_path=rel_photo_path,
         status=clean_status,
+        department_id=current_user.department_id,
     )
     db.add(new_entry)
     db.commit()
@@ -265,6 +266,8 @@ def list_watchlist_persons(
         query = query.filter(PersonWatchlistModel.category == category.strip().lower())
     if name:
         query = query.filter(PersonWatchlistModel.name.ilike(f"%{name.strip()}%"))
+    if current_user.department_id:
+        query = query.filter(PersonWatchlistModel.department_id == current_user.department_id)
 
     items = query.order_by(desc(PersonWatchlistModel.created_at)).offset(offset).limit(limit).all()
     return [_format_person_response(item) for item in items]
@@ -279,7 +282,11 @@ def get_watchlist_person(
     """
     Get details of a specific person watchlist entry by UUID.
     """
-    item = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id).first()
+    query = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id)
+    if current_user.department_id:
+        query = query.filter(PersonWatchlistModel.department_id == current_user.department_id)
+        
+    item = query.first()
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -298,7 +305,11 @@ def update_watchlist_person(
     """
     Update person details or status (e.g., mark as 'resolved' when apprehended or located).
     """
-    item = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id).first()
+    query = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id)
+    if current_user.department_id:
+        query = query.filter(PersonWatchlistModel.department_id == current_user.department_id)
+        
+    item = query.first()
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -331,7 +342,11 @@ def delete_watchlist_person(
     """
     Delete a person watchlist entry permanently.
     """
-    item = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id).first()
+    query = db.query(PersonWatchlistModel).filter(PersonWatchlistModel.id == id)
+    if current_user.department_id:
+        query = query.filter(PersonWatchlistModel.department_id == current_user.department_id)
+        
+    item = query.first()
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
