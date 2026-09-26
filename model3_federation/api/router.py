@@ -590,6 +590,8 @@ def delete_system(
 @router.get("/cameras")
 def get_federated_cameras(
     system_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
@@ -607,7 +609,9 @@ def get_federated_cameras(
     if system_id:
         q += " WHERE c.vms_system_id = :sys"
         params["sys"] = system_id
-    q += " ORDER BY vs.name, c.name"
+    q += " ORDER BY vs.name, c.name LIMIT :l OFFSET :o"
+    params["l"] = limit
+    params["o"] = offset
 
     rows = db.execute(text(q), params).fetchall()
     return [
@@ -632,6 +636,7 @@ def get_federated_events(
     system_id: Optional[str] = Query(None),
     plate: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
@@ -654,8 +659,9 @@ def get_federated_events(
         from model3_federation.correlation.engine import _normalize_plate
         params["plate"] = _normalize_plate(plate)
         q += " AND d.detected_plate = :plate"
-    q += " ORDER BY d.\"timestamp\" DESC LIMIT :lim"
+    q += " ORDER BY d.\"timestamp\" DESC LIMIT :lim OFFSET :off"
     params["lim"] = limit
+    params["off"] = offset
 
     rows = db.execute(text(q), params).fetchall()
     return [
@@ -745,6 +751,8 @@ def get_correlations(
 @router.get("/correlations/track")
 def track_vehicle(
     plate: str = Query(..., description="Vehicle plate number to track across all VMS systems"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -771,9 +779,9 @@ def track_vehicle(
         LEFT JOIN vms_systems vs ON vs.id = c.vms_system_id
         WHERE  d.detected_plate = :p
         ORDER  BY d."timestamp" ASC
-        LIMIT  100
+        LIMIT  :l OFFSET :o
         """
-    ), {"p": plate_norm}).fetchall()
+    ), {"p": plate_norm, "l": limit, "o": offset}).fetchall()
 
     sightings = [
         {
